@@ -1,15 +1,14 @@
 package main
 
 import (
-  "sync"
   "fmt"
   "image/jpeg"
   "log"
   "os"
   "path/filepath"
   "github.com/gen2brain/go-fitz"
-  "reflect"
-  "runtime"
+  "time"
+  "sync"
 )
 var tmpDir = "./output"
 
@@ -22,9 +21,14 @@ func createOutputFolder() {
   os.Mkdir(tmpDir, os.ModePerm)
 }
 
+func doSomething (n int) {
+  fmt.Println("Processing", n)
+  time.Sleep(1000 * time.Millisecond)
+}
+
 func generate(doc *fitz.Document, number int) {
   fmt.Println("Generating image from page", number)
-  img, err := doc.Image(number)
+  img, err := doc.ImageDPI(number, 72)
   if err != nil {
     log.Fatal("Error while extracting image", err)
     panic(err)
@@ -48,28 +52,33 @@ func generate(doc *fitz.Document, number int) {
 }
 
 func main() {
-  runtime.GOMAXPROCS(2)
+  maxGoroutines := 4
+  semaphore := make(chan struct{}, maxGoroutines)
+
   doc, err := fitz.New("12MB.pdf")
-  fmt.Println(reflect.TypeOf(doc))
+  // doc, err := fitz.New("10page.pdf")
   if err != nil {
     panic(err)
   }
   defer doc.Close()
 
   createOutputFolder()
-  var wg sync.WaitGroup
   numPages := doc.NumPage()
+  var wg sync.WaitGroup
   wg.Add(numPages)
 
   fmt.Println("===> Number of Pages", numPages)
   for number := 0; number < numPages; number++ {
-    fmt.Println("=>", number)
+    semaphore <- struct{}{}
     go func(doc *fitz.Document, number int, wg *sync.WaitGroup) {
-      fmt.Println("Called")
-      defer wg.Done()
       generate(doc, number)
+      // doSomething(number)
+      <-semaphore
+      wg.Done()
     }(doc, number, &wg)
   }
+
+  close(semaphore)
   wg.Wait()
   fmt.Println("===> Done")
 }
